@@ -17,28 +17,32 @@ A non-repeated, named group of (more than one) fields also generates a structure
 The "..." operator in a group matches the terminal that follows before each repetition, i.e. a delimiter.  
 The "|" (alternatives) operator binds more tightly than the "..." operator.  
 The "%" operator forces the following non-terminal to be inlined, even if declared with "::=".  
-The rule named "@" is the starting rule for the grammar, and must be present.
+The first rule declared is the starting rule for the grammar.
 
 ```
-  @        ::= rule+
-  rule     ::= br ( name | '@':name ) ( '::=' | '::-':inline ) alts eol
+  syntax   ::= eol ( '+' name eol )* rule+
+  rule     ::= ( name | '@':name ) ( '::=' | '::-':inline.b ) alts eol !
   alts     ::- ( sequence ... '|' )+
-  sequence ::= clause+
-  clause   ::= atom [ ':' name ] [ '?':opt | '+':plus | '*':star ]
+  sequence ::- clause+
+  clause   ::= atom [ ':' name ] [ '?':opt | '+':plus | '*':star ] !
   atom     ::- ref | term | group | maybe
-  ref      ::= [ '%':inline ] name
+  ref      ::= [ '%':inline.b ] name
   term     ::= text | '@' name
   group    ::= '(' alts [ '...' delim ] ')'
   maybe    ::= '[' alts [ '...' delim ] ']'
   delim    ::- text
   text     ::- @squote | @dquote
   name     ::- @word
-  br       ::- @EOL*
-  eol      ::- @EOF | @EOL
+  eol      ::- @EOF | @EOL*
 ```
 
 Literals (quoted-text) and terminals beginning with "@" are treated as tokens for
 the purposes of parsing: they are the lexical tokens of the grammar.
+
+Error reporting: the "!" marker on the end of some rules indicates an expected entity
+for error reporting: if the parser cannot match the input after attempting to match
+a marked rule, and the input has not yet advanced, it will report that it was expecting
+the marked entity rather than some set of possible tokens.
 
 NB. not sure about "inlined rules" described above. If an inlined rule contains a single field
 in each alternative, I actually want to unwrap that field and rename it at the use-site,
@@ -94,6 +98,84 @@ The nodes in the AST are:
     line: source line number.
   }
 ```
+
+### Decidability
+
+Generally prefer constructs that are obvious and can be proven correct by construction,
+even at some loss of expressivity.
+
+So, apply restrictions to the acceptable grammars until we can prove the parser will
+make progress (or terminate at some recursion limit) and does not contain any unreachable
+states.
+
+Things we know:
+
+* A rule defines a named _pattern_ that generates an AST node when it matches.
+* If a rule matches "nothing", it cannot generate a node, so is that illegal?
+* An inlined rule doesn't generate a node, so it can match "nothing".
+
+Naming rules:
+
+A "renamed" term is any term (group, rule-ref or literal) with a ":name" suffix.
+The implicit name for a term is the rule name for a rule-ref or @ref.
+Groups and literals do not have an implicit name.
+
+Structures:
+A rule body always generates a structure, unless it is inlined into another rule's structure.
+A repeating term that contains two or more fields always generates an array-of-structures field.
+An optional term that contains two or more fields - ?
+
+Fields:
+A rule-ref always generates a 'node-ref' field, (unless the rule is inlined,
+in which case the inlined rule's structure is merged at the use-site.)
+A named literal always generates a 'string' (or 'boolean' with .b) field.
+A lexical literal (@word, @number, @string) always generates a field.
+
+Merging:
+Duplicate field names within the same structure are merged (they refer to the
+same field) but they must be in different alternatives to be legal.
+
+When two or more fields are repeated together, i.e. they appear inside a repeating group,
+they generate an array of structures, and the group must be explicitly named.
+This rule applies whether the fields are generated in different alternatives or not;
+the alternative that matches will populate its fields, and any remaining fields will
+be given their default value.
+The name need not appear on the group that actually causes the repetition, but
+some enclosing group must supply a name for the field-group.
+
+When a single field is repeated, it becomes an array and must have a name.
+
+Implicit naming: if a named inline rule contains a single term without an explicit name,
+that term is renamed with the name of the inline rule.
+
+
+### CFGs
+
+https://en.wikipedia.org/wiki/LL_parser
+https://en.wikipedia.org/wiki/Chomsky_normal_form
+^ have actually implemented most of the steps in DEL.
+
+Look at masq.lua
+
+a+  === A -> Aa | a
+a?  === A -> a | e
+(a) === A -> a
+
+
+### Operator Precedence
+
+```
+  expr    ::= factor ( ( '+' | '-' ) factor )*
+  factor  ::= term ( ( '*' | '/' ) term )*
+  term    ::= @number | '(' expr ')'
+```
+
+
+### PEGs
+
+Parsing expression grammars: http://www.inf.puc-rio.br/~roberto/docs/peg.pdf
+A kind of Generalized Top-Down Parsing Language.
+
 
 ### Left Recursion
 

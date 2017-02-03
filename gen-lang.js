@@ -17,7 +17,7 @@ var squote = "'([^\\\\']*(?:\\\\.[^\\\\']*)*)('?)",
     dquote = '"([^\\\\"]*(?:\\\\.[^\\\\"]*)*)("?)',
     word = "([@\\w][\\w\\d_-]*)",
     symbols = "(\\.\\.\\.|::=|::-|.)",
-    tokenize = new RegExp("(\\r\\n?|\\n)|(\\s+)|"+squote+"|"+dquote+"|"+word+"|"+symbols, "g");
+    tokenize = new RegExp("(\\r\\n?|\\n)|(\\s+|//[^\\r\\n]*)|"+squote+"|"+dquote+"|"+word+"|"+symbols, "g");
 
 const unquote_map = { "b":"\b", "f":"\f", "n":"\n", "r":"\r", "t":"\t", "v":"\v", "0":"\0", "'":"'", "\"":"\"", "\\":"\\" };
 function unquote(str) {
@@ -47,7 +47,7 @@ function parse(filepath) {
       var m = re.exec(src);
       if (!m) { token = "EOF"; break; }
       if (m[1]) { line += 1; token = "EOL"; capture = "beginning of line"; break; }
-      if (m[2]) { continue; } // whitespace.
+      if (m[2]) { continue; } // whitespace or comment.
       capture = m[0]; // token source text for error reporting.
       if (m[3] || m[5]) { // text literals.
         if ((m[3] && !m[4]) || (m[5] && !m[6])) {
@@ -263,6 +263,9 @@ function compile(filepath) {
         var set = first_for_rule(to);
         add_terms(rule, first, seen, set);
         assert(set.has_epsilon != null); // must be set in first_for_rule.
+        if (term.max > 1 && set.has_epsilon) {
+          error(rule, "repeating non-terminal can match nothing (i.e. generates left-recursion ??)");
+        }
         if (term.min > 0 && !set.has_epsilon) {
           epsilon = false; // must match, and all alts have a required terminal.
           break;
@@ -274,6 +277,9 @@ function compile(filepath) {
         var set = first_for_alts(rule, term.alts);
         add_terms(rule, first, seen, set);
         assert(set.has_epsilon != null); // must be set in first_for_alts.
+        if (term.max > 1 && set.has_epsilon) {
+          error(rule, "repeating group can match nothing (i.e. generates left-recursion ??)");
+        }
         if (term.min > 0 && !set.has_epsilon) {
           epsilon = false; // must match, and all alts have a required terminal.
           break;
@@ -319,8 +325,8 @@ function compile(filepath) {
   }
 
   // find the starting rule.
-  var start = rules["@"];
-  if (!start) die(basename(filepath)+": no starting rule named '@' was found");
+  var start = rules["@"] || ruleList[0];
+  if (!start) die(basename(filepath)+": no starting rule was found");
 
   // build the first-sets for each rule.
   first_for_rule(start);
@@ -335,6 +341,11 @@ function compile(filepath) {
   }
 
   // next things to do:
+
+  // actually, for recursive descent we need to get back the disjoint sets of
+  // starting terminals for each non-terminal (what we have now)
+  // so we can decide whether to descend into that non-terminal or not,
+  // but only when we need to make that decision (often we always descend)
 
   // insert wrapper objects into the first-set that represent the terminal found,
   // with a chain of rule-activations traversed to get there; use the chain
